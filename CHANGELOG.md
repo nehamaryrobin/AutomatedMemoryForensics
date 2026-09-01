@@ -1,5 +1,21 @@
 # Changelog
 
+## Phase 7: Network Analysis
+**Commit Message:** `feat: implement netscan C2 correlation engine`
+* Engineered a cross-referencing module that maps active network sockets and listening ports against previously detected malicious PIDs.
+* Automatically escalates risk (+40) to CRITICAL if a hidden or injected process maintains network communications, indicating Command and Control (C2) activity.
+
+## Phase 6: Injection & DLL Analysis
+**Commit Message:** `feat: implement detection rules for VAD injection and unlinked DLLs`
+* Expanded the detection engine to analyze `malfind` and `ldrmodules` JSON outputs from Volatility.
+* Added logic to automatically flag fileless malware (`PAGE_EXECUTE_READWRITE` injections) and reflective DLL injections (modules missing from `InLoad`/`InInit`/`InMem` PEB lists).
+* Configured dynamic risk scoring (+25 for code injection, +20 for unlinked DLLs).
+
+## Phase 4 & 5: Process Analysis & Hidden Process Detection
+**Commit Message:** `feat: build Cross-View Analysis engine to detect hidden rootkit processes`
+* Engineered a detection module that programmatically cross-references Volatility process lists (`pslist`, `psscan`, `psxview`).
+* Implemented DKOM (Direct Kernel Object Manipulation) detection that flags processes present in memory pools but hidden from the OS process list, escalating the case risk score (+30).
+* Created a new `/api/v1/cases/{case_id}/findings` endpoint and integrated a dynamic React UI to render structured `EvidenceMetadata` findings.
 ## Phase 3: Volatility 3 Integration
 **Commit Message:** `feat: integrate Volatility 3 forensic engine wrapper`
 * Implemented a secure Python wrapper for Volatility 3 using isolated subprocesses to prevent crashes on corrupted memory dumps.

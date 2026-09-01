@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { UploadCloud, File as FileIcon, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { UploadCloud, File as FileIcon, AlertCircle, CheckCircle, Loader2, ShieldAlert } from 'lucide-react';
 
 interface CaseStatus {
   id: string;
@@ -11,6 +11,15 @@ interface CaseStatus {
   risk_score: number;
 }
 
+interface Finding {
+  id: string;
+  finding_type: string;
+  severity: string;
+  description: string;
+  confidence: number;
+  evidence_data: string;
+}
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
@@ -18,6 +27,7 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [caseId, setCaseId] = useState('');
   const [caseData, setCaseData] = useState<CaseStatus | null>(null);
+  const [findings, setFindings] = useState<Finding[]>([]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -26,6 +36,7 @@ export default function App() {
       setProgress(0);
       setCaseId('');
       setCaseData(null);
+      setFindings([]);
     }
   };
 
@@ -60,6 +71,16 @@ export default function App() {
     }
   };
 
+  // Fetch Findings when completed
+  const fetchFindings = async (id: string) => {
+    try {
+      const res = await axios.get(`http://localhost:8000/api/v1/cases/${id}/findings`);
+      setFindings(res.data);
+    } catch (err) {
+      console.error("Failed to fetch findings", err);
+    }
+  };
+
   // Poll for Case Status once Case ID is available
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -72,6 +93,9 @@ export default function App() {
         // Stop polling if completed or failed
         if (response.data.status === 'COMPLETED' || response.data.status === 'FAILED') {
           clearInterval(interval);
+          if (response.data.status === 'COMPLETED') {
+            fetchFindings(caseId);
+          }
         }
       } catch (error) {
         console.error("Error polling case status:", error);
@@ -93,7 +117,7 @@ export default function App() {
         <p className="text-gray-500">SIH Rootkit Detection Pipeline</p>
       </header>
 
-      <main className="w-full max-w-3xl bg-white shadow rounded-lg p-8">
+      <main className="w-full max-w-4xl bg-white shadow rounded-lg p-8">
         <div className="mb-8">
           <h2 className="text-xl font-semibold mb-4 border-b pb-2">Create New Case</h2>
           
@@ -182,6 +206,41 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Findings Section */}
+            {caseData?.status === 'COMPLETED' && (
+              <div className="mt-8 border-t pt-6">
+                <h3 className="text-xl font-bold mb-4 flex items-center text-gray-900">
+                  <ShieldAlert className="mr-2 text-red-600" /> Forensic Findings
+                </h3>
+                
+                {findings.length === 0 ? (
+                  <p className="text-gray-500 italic bg-white p-4 rounded border">No suspicious artifacts detected.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {findings.map((f) => (
+                      <div key={f.id} className="bg-white border-l-4 border-red-500 p-4 rounded shadow-sm">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold text-red-700">{f.finding_type.replace('_', ' ')}</h4>
+                          <span className="px-2 py-1 bg-red-100 text-red-800 text-xs rounded font-mono">
+                            Confidence: {(f.confidence * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-800 mb-2">{f.description}</p>
+                        
+                        <details className="mt-2 text-xs text-gray-500 cursor-pointer">
+                          <summary className="font-medium hover:text-gray-700">View Raw Evidence Metadata</summary>
+                          <pre className="mt-2 p-2 bg-gray-100 rounded overflow-x-auto border border-gray-200 text-[10px]">
+                            {f.evidence_data}
+                          </pre>
+                        </details>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         )}
       </main>

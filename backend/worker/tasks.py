@@ -3,9 +3,11 @@ import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from worker.celery_app import celery_app
-from app.models.case import Case, AnalysisJob, PluginResult
+from app.models.case import Case, AnalysisJob, PluginResult, EvidenceMetadata
 from worker.forensics.vol_wrapper import VolatilityWrapper
+from worker.forensics.detection import detect_hidden_processes, detect_injected_code, detect_unlinked_dlls, detect_suspicious_network
 import uuid
+import json
 
 # Synchronous DB setup for the worker
 SYNC_DATABASE_URI = "postgresql://sih_user:sih_password@localhost:5432/forensics_db"
@@ -58,11 +60,23 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
         case_dir = os.path.dirname(storage_path)
         results_dir = os.path.join(case_dir, "results")
 
+        # Dictionary to hold parsed JSONs for the detection engine
+        plugin_outputs = {}
+
         # 3. Iterate and execute plugins
         successful_plugins = 0
         for plugin in WINDOWS_PLUGINS:
             # Run the plugin
             result_data = vol.run_plugin(storage_path, plugin, results_dir)
+            
+            # Store in dict for detection phase
+            if result_data["status"] == "SUCCESS" and result_data["parsed_output"]:
+                try:
+                    plugin_outputs[plugin] = json.loads(result_data["parsed_output"])
+                except:
+                    plugin_outputs[plugin] = []
+            else:
+                plugin_outputs[plugin] = []
             
             # Save the result metadata to the DB
             db_result = PluginResult(
@@ -72,8 +86,6 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
                 status=result_data["status"],
                 execution_time=result_data["execution_time"],
                 raw_output_path=result_data["raw_output_path"],
-                # We truncate parsed_output to prevent DB overflow if it's too large, 
-                # but it's safe on disk either way.
                 parsed_output=result_data["parsed_output"] if result_data["parsed_output"] else result_data.get("error", "")
             )
             db.add(db_result)
@@ -84,16 +96,73 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
         # Commit all plugin results
         db.commit()
 
-        # 4. Finalize Job Status
+        # 4. Phase 4, 5, 6: Run Detection Engine (Cross-View Analysis & Injection)
+        findings = detect_hidden_processes(
+            pslist_data=plugin_outputs.get("windows.pslist.PsList", []),
+            psscan_data=plugin_outputs.get("windows.psscan.PsScan", []),
+            psxview_data=plugin_outputs.get("windows.psxview.PsXView", [])
+        )
+        
+        findings.extend(detect_injected_code(
+            malfind_data=plugin_outputs.get("windows.malfind.Malfind", [])
+        ))
+        
+        findings.extend(detect_unlinked_dlls(
+            ldrmodules_data=plugin_outputs.get("windows.ldrmodules.LdrModules", [])
+        ))
+        
+        # 5. Phase 7: Network Correlation
+        suspicious_pids = set()
+        for finding in findings:
+            data = json.loads(finding["evidence_data"])
+            pid = None
+            if "process_info" in data:
+                pid = data["process_info"].get("PID")
+            elif "module_info" in data:
+                pid = data["module_info"].get("PID")
+            
+            if pid is not None:
+                suspicious_pids.add(pid)
+                
+        findings.extend(detect_suspicious_network(
+            netscan_data=plugin_outputs.get("windows.netscan.NetScan", []),
+            suspicious_pids=suspicious_pids
+        ))
+        
+        risk_score = 0.0
+        for finding in findings:
+            evidence = EvidenceMetadata(
+                id=str(uuid.uuid4()),
+                case_id=case_id,
+                finding_type=finding["finding_type"],
+                severity=finding["severity"],
+                description=finding["description"],
+                confidence=finding["confidence"],
+                evidence_data=finding["evidence_data"]
+            )
+            db.add(evidence)
+            
+            # Increment Risk Score based on finding type
+            if finding["finding_type"] == "HIDDEN_PROCESS":
+                risk_score += 30.0
+            elif finding["finding_type"] == "INJECTED_CODE":
+                risk_score += 25.0
+            elif finding["finding_type"] == "UNLINKED_DLL":
+                risk_score += 20.0
+            elif finding["finding_type"] == "SUSPICIOUS_NETWORK":
+                risk_score += 40.0
+
+        db.commit()
+
+        # 6. Finalize Job Status
         job.status = "COMPLETED"
         job.completed_at = datetime.datetime.now(datetime.timezone.utc)
         
         if case:
-            # If at least one plugin succeeded, consider the extraction completed.
             if successful_plugins > 0:
                 case.status = "COMPLETED"
-                # Keep risk score 0 for now until Phase 4 (Detection/Correlation)
-                case.risk_score = 0.0 
+                # Cap risk score at 100
+                case.risk_score = min(100.0, risk_score)
             else:
                 case.status = "FAILED"
                 
