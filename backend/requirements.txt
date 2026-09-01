@@ -10,3 +10,5 @@ celery
 redis
 alembic
 volatility3
+python-dateutil
+reportlab

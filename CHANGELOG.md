@@ -1,5 +1,17 @@
 # Changelog
 
+## Phase 9: Automated PDF Report Generation
+**Commit Message:** `feat: implement dynamic PDF executive report generation`
+* Integrated `reportlab` to construct dynamic, multi-page PDF documents.
+* Built the `/api/v1/cases/{case_id}/report/pdf` endpoint which aggregates Case details, Risk Scores, Findings, and Timelines into a single executive summary.
+* Updated React frontend to stream and download the PDF report seamlessly.
+
+## Phase 8: Timeline Generation
+**Commit Message:** `feat: implement chronological timeline reconstruction engine`
+* Built a timeline engine to extract, normalize, and sort timestamps from Volatility outputs (`pslist`, `netscan`).
+* Reconstructs the attacker's actions sequentially (e.g., `PROCESS_START`, `NETWORK_CONNECTION`, `PROCESS_EXIT`).
+* Implemented a new `/api/v1/cases/{case_id}/timeline` endpoint and an interactive vertical timeline UI in React.
+
 ## Phase 7: Network Analysis
 **Commit Message:** `feat: implement netscan C2 correlation engine`
 * Engineered a cross-referencing module that maps active network sockets and listening ports against previously detected malicious PIDs.

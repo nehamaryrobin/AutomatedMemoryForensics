@@ -3,9 +3,10 @@ import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from worker.celery_app import celery_app
-from app.models.case import Case, AnalysisJob, PluginResult, EvidenceMetadata
+from app.models.case import Case, AnalysisJob, PluginResult, EvidenceMetadata, TimelineEvent
 from worker.forensics.vol_wrapper import VolatilityWrapper
 from worker.forensics.detection import detect_hidden_processes, detect_injected_code, detect_unlinked_dlls, detect_suspicious_network
+from worker.forensics.timeline import generate_timeline
 import uuid
 import json
 
@@ -152,9 +153,21 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
             elif finding["finding_type"] == "SUSPICIOUS_NETWORK":
                 risk_score += 40.0
 
+        # 6. Phase 8: Timeline Generation
+        timeline_events = generate_timeline(plugin_outputs)
+        for event in timeline_events:
+            te = TimelineEvent(
+                id=str(uuid.uuid4()),
+                case_id=case_id,
+                timestamp=event["timestamp"],
+                event_type=event["event_type"],
+                details=event["details"]
+            )
+            db.add(te)
+
         db.commit()
 
-        # 6. Finalize Job Status
+        # 7. Finalize Job Status
         job.status = "COMPLETED"
         job.completed_at = datetime.datetime.now(datetime.timezone.utc)
         

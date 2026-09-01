@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { UploadCloud, File as FileIcon, AlertCircle, CheckCircle, Loader2, ShieldAlert } from 'lucide-react';
+import { UploadCloud, File as FileIcon, AlertCircle, Loader2, ShieldAlert, Clock, Activity, Download } from 'lucide-react';
 
 interface CaseStatus {
   id: string;
@@ -20,6 +20,13 @@ interface Finding {
   evidence_data: string;
 }
 
+interface TimelineEvent {
+  id: string;
+  timestamp: string;
+  event_type: string;
+  details: string;
+}
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
@@ -28,6 +35,8 @@ export default function App() {
   const [caseId, setCaseId] = useState('');
   const [caseData, setCaseData] = useState<CaseStatus | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [searchId, setSearchId] = useState('');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -37,7 +46,20 @@ export default function App() {
       setCaseId('');
       setCaseData(null);
       setFindings([]);
+      setTimelineEvents([]);
     }
+  };
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchId.trim()) return;
+    
+    setFile(null);
+    setUploadStatus('idle');
+    setCaseData(null);
+    setFindings([]);
+    setTimelineEvents([]);
+    setCaseId(searchId.trim());
   };
 
   const handleUpload = async () => {
@@ -71,17 +93,18 @@ export default function App() {
     }
   };
 
-  // Fetch Findings when completed
-  const fetchFindings = async (id: string) => {
+  const fetchFindingsAndTimeline = async (id: string) => {
     try {
-      const res = await axios.get(`http://localhost:8000/api/v1/cases/${id}/findings`);
-      setFindings(res.data);
+      const resFindings = await axios.get(`http://localhost:8000/api/v1/cases/${id}/findings`);
+      setFindings(resFindings.data);
+
+      const resTimeline = await axios.get(`http://localhost:8000/api/v1/cases/${id}/timeline`);
+      setTimelineEvents(resTimeline.data);
     } catch (err) {
-      console.error("Failed to fetch findings", err);
+      console.error("Failed to fetch findings or timeline", err);
     }
   };
 
-  // Poll for Case Status once Case ID is available
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
 
@@ -90,11 +113,10 @@ export default function App() {
         const response = await axios.get(`http://localhost:8000/api/v1/cases/${caseId}`);
         setCaseData(response.data);
 
-        // Stop polling if completed or failed
         if (response.data.status === 'COMPLETED' || response.data.status === 'FAILED') {
           clearInterval(interval);
           if (response.data.status === 'COMPLETED') {
-            fetchFindings(caseId);
+            fetchFindingsAndTimeline(caseId);
           }
         }
       } catch (error) {
@@ -103,7 +125,7 @@ export default function App() {
     };
 
     if (caseId && (!caseData || (caseData.status !== 'COMPLETED' && caseData.status !== 'FAILED'))) {
-      pollStatus(); // Initial fetch
+      pollStatus(); 
       interval = setInterval(pollStatus, 3000);
     }
 
@@ -114,7 +136,20 @@ export default function App() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10">
       <header className="mb-10 text-center">
         <h1 className="text-4xl font-bold text-gray-900 mb-2">Automated Memory Forensics</h1>
-        <p className="text-gray-500">SIH Rootkit Detection Pipeline</p>
+        <p className="text-gray-500 mb-6">SIH Rootkit Detection Pipeline</p>
+        
+        <form onSubmit={handleSearch} className="flex justify-center max-w-md mx-auto">
+          <input 
+            type="text" 
+            placeholder="Enter existing Case ID (e.g. mock-case-123)"
+            className="border border-gray-300 rounded-l px-4 py-2 w-full focus:outline-none focus:border-blue-500"
+            value={searchId}
+            onChange={(e) => setSearchId(e.target.value)}
+          />
+          <button type="submit" className="bg-gray-800 text-white px-4 py-2 rounded-r hover:bg-gray-700">
+            Lookup
+          </button>
+        </form>
       </header>
 
       <main className="w-full max-w-4xl bg-white shadow rounded-lg p-8">
@@ -136,25 +171,27 @@ export default function App() {
           </div>
         </div>
 
-        {file && (
+        {(file || caseId) && (
           <div className="mb-6 bg-gray-50 p-4 rounded border">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <FileIcon className="h-6 w-6 text-blue-500 mr-3" />
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                  <p className="text-xs text-gray-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+            {file && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <FileIcon className="h-6 w-6 text-blue-500 mr-3" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                    <p className="text-xs text-gray-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                  </div>
                 </div>
+                {uploadStatus === 'idle' && (
+                  <button 
+                    onClick={handleUpload}
+                    className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 transition"
+                  >
+                    Start Upload
+                  </button>
+                )}
               </div>
-              {uploadStatus === 'idle' && (
-                <button 
-                  onClick={handleUpload}
-                  className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 transition"
-                >
-                  Start Upload
-                </button>
-              )}
-            </div>
+            )}
 
             {uploadStatus === 'uploading' && (
               <div className="mt-4">
@@ -175,10 +212,21 @@ export default function App() {
               </div>
             )}
             
-            {/* Analysis Status Area */}
             {caseData && (
               <div className="mt-6 border-t pt-4">
-                <h3 className="text-lg font-semibold mb-3">Analysis Status</h3>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-lg font-semibold">Analysis Status</h3>
+                  {caseData.status === 'COMPLETED' && (
+                    <a 
+                      href={`http://localhost:8000/api/v1/cases/${caseId}/report/pdf`} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="flex items-center text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition"
+                    >
+                      <Download className="w-4 h-4 mr-2" /> Download PDF Report
+                    </a>
+                  )}
+                </div>
                 
                 <div className="bg-white p-4 rounded border shadow-sm flex items-center justify-between">
                   <div>
@@ -207,7 +255,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Findings Section */}
             {caseData?.status === 'COMPLETED' && (
               <div className="mt-8 border-t pt-6">
                 <h3 className="text-xl font-bold mb-4 flex items-center text-gray-900">
@@ -238,6 +285,32 @@ export default function App() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {caseData?.status === 'COMPLETED' && timelineEvents.length > 0 && (
+              <div className="mt-8 border-t pt-6">
+                <h3 className="text-xl font-bold mb-4 flex items-center text-gray-900">
+                  <Clock className="mr-2 text-blue-600" /> Event Timeline
+                </h3>
+                <div className="bg-white p-6 rounded border shadow-sm max-h-96 overflow-y-auto">
+                  <div className="relative border-l border-gray-200 ml-3">
+                    {timelineEvents.map((event, index) => (
+                      <div key={event.id} className="mb-6 ml-6">
+                        <span className="absolute flex items-center justify-center w-6 h-6 bg-blue-100 rounded-full -left-3 ring-4 ring-white">
+                          <Activity className="w-3 h-3 text-blue-600" />
+                        </span>
+                        <h3 className="flex items-center mb-1 text-sm font-semibold text-gray-900">
+                          {event.event_type.replace('_', ' ')}
+                        </h3>
+                        <time className="block mb-2 text-xs font-normal leading-none text-gray-400">
+                          {new Date(event.timestamp).toLocaleString()}
+                        </time>
+                        <p className="mb-4 text-sm font-normal text-gray-600">{event.details}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 

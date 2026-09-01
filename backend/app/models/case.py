@@ -46,3 +46,12 @@ class PluginResult(Base):
     execution_time = Column(Float, nullable=False)
     raw_output_path = Column(String, nullable=True)
     parsed_output = Column(String, nullable=True) # JSON string representing the output
+
+class TimelineEvent(Base):
+    __tablename__ = "timeline_events"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id"), nullable=False)
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    event_type = Column(String, nullable=False) # PROCESS_START, PROCESS_EXIT, NETWORK_CONNECTION
+    details = Column(String, nullable=False)

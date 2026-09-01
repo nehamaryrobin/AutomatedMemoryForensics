@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import upload, cases, findings
+from app.api import upload, cases, findings, timeline, report
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +32,8 @@ async def startup():
 app.include_router(upload.router, prefix=settings.API_V1_STR)
 app.include_router(cases.router, prefix=f"{settings.API_V1_STR}/cases")
 app.include_router(findings.router, prefix=f"{settings.API_V1_STR}/cases")
+app.include_router(timeline.router, prefix=f"{settings.API_V1_STR}/cases")
+app.include_router(report.router, prefix=f"{settings.API_V1_STR}/cases")
 
 @app.get("/")
 def root():
