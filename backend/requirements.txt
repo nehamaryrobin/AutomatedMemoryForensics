@@ -9,3 +9,4 @@ aiofiles
 celery
 redis
 alembic
+volatility3

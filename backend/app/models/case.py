@@ -35,3 +35,14 @@ class EvidenceMetadata(Base):
     description = Column(String, nullable=False)
     confidence = Column(Float, nullable=False)
     evidence_data = Column(String, nullable=False) # JSON string for now
+
+class PluginResult(Base):
+    __tablename__ = "plugin_results"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id"), nullable=False)
+    plugin_name = Column(String, nullable=False)
+    status = Column(String, nullable=False) # SUCCESS or FAILED
+    execution_time = Column(Float, nullable=False)
+    raw_output_path = Column(String, nullable=True)
+    parsed_output = Column(String, nullable=True) # JSON string representing the output
