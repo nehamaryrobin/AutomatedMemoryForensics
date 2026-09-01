@@ -1,14 +1,16 @@
 fastapi
 uvicorn
 sqlalchemy
-psycopg2-binary
-asyncpg
+aiosqlite
 pydantic
+pydantic-settings
 python-multipart
 aiofiles
-celery
-redis
-alembic
 volatility3
+<<<<<<< Updated upstream
 python-dateutil
 reportlab
+=======
+pefile
+capstone
+>>>>>>> Stashed changes

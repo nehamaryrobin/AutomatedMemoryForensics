@@ -5,19 +5,20 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     
-    # Postgres
-    POSTGRES_USER: str = "sih_user"
-    POSTGRES_PASSWORD: str = "sih_password"
-    POSTGRES_DB: str = "forensics_db"
-    POSTGRES_SERVER: str = "localhost"
-    POSTGRES_PORT: str = "5432"
-
+    # SQLite Database
+    DATABASE_PATH: str = "./forensics.db"
+    
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        return f"sqlite+aiosqlite:///{self.DATABASE_PATH}"
 
-    # Storage
+    @property
+    def SYNC_SQLALCHEMY_DATABASE_URI(self) -> str:
+        return f"sqlite:///{self.DATABASE_PATH}"
+
+    # Storage & Symbols
     STORAGE_DIR: str = "../storage"
+    SYMBOLS_DIR: str = "../symbols"
 
     class Config:
         case_sensitive = True

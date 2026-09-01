@@ -1,17 +1,18 @@
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, UploadFile, File, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.services.storage import LocalObjectStore
+from app.services.analysis import run_memory_analysis
 from app.models.case import Case
 from app.schemas.case import UploadResponse
 import uuid
-from worker.tasks import analyze_memory_dump
 
 router = APIRouter()
 storage_service = LocalObjectStore()
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_memory_dump(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):
@@ -34,8 +35,8 @@ async def upload_memory_dump(
     db.add(new_case)
     await db.commit()
     
-    # Trigger Celery Task here for analysis
-    analyze_memory_dump.delay(case_id, file_metadata["storage_path"])
+    # Trigger Background Task for automated Volatility analysis
+    background_tasks.add_task(run_memory_analysis, case_id, file_metadata["storage_path"])
     
     return UploadResponse(
         case_id=case_id,

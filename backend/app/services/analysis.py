@@ -1,19 +1,20 @@
 import os
 import datetime
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from worker.celery_app import celery_app
-from app.models.case import Case, AnalysisJob, PluginResult, EvidenceMetadata, TimelineEvent
-from worker.forensics.vol_wrapper import VolatilityWrapper
-from worker.forensics.detection import detect_hidden_processes, detect_injected_code, detect_unlinked_dlls, detect_suspicious_network
-from worker.forensics.timeline import generate_timeline
 import uuid
 import json
-
+import logging
 from app.core.database import SyncSessionLocal
-SessionLocal = SyncSessionLocal
+from app.models.case import Case, AnalysisJob, PluginResult, EvidenceMetadata
+from app.services.forensics.vol_wrapper import VolatilityWrapper
+from app.services.forensics.detection import (
+    detect_hidden_processes,
+    detect_injected_code,
+    detect_unlinked_dlls,
+    detect_suspicious_network,
+)
 
-# The selected plugins for the MVP Phase 3
+logger = logging.getLogger(__name__)
+
 WINDOWS_PLUGINS = [
     "windows.pslist.PsList",
     "windows.psscan.PsScan",
@@ -29,12 +30,13 @@ WINDOWS_PLUGINS = [
     "windows.modules.Modules"
 ]
 
-@celery_app.task(bind=True)
-def analyze_memory_dump(self, case_id: str, storage_path: str):
+def run_memory_analysis(case_id: str, storage_path: str):
     """
-    Executes Volatility 3 plugins on the uploaded memory dump.
+    Background task that executes Volatility 3 plugins and anomaly detection.
+    Runs synchronously in a background thread spawned by FastAPI BackgroundTasks.
     """
-    db = SessionLocal()
+    logger.info(f"Starting background memory analysis for case: {case_id}")
+    db = SyncSessionLocal()
     try:
         # 1. Update Job Status to RUNNING
         job_id = str(uuid.uuid4())
@@ -54,30 +56,26 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
 
         # 2. Initialize Volatility Wrapper
         vol = VolatilityWrapper()
-        
-        # We will store the output JSONs in a 'results' folder inside the case storage dir
         case_dir = os.path.dirname(storage_path)
         results_dir = os.path.join(case_dir, "results")
 
-        # Dictionary to hold parsed JSONs for the detection engine
         plugin_outputs = {}
-
-        # 3. Iterate and execute plugins
         successful_plugins = 0
+
+        # 3. Execute Plugins
         for plugin in WINDOWS_PLUGINS:
-            # Run the plugin
+            logger.info(f"Running plugin {plugin} for case {case_id}...")
             result_data = vol.run_plugin(storage_path, plugin, results_dir)
             
-            # Store in dict for detection phase
             if result_data["status"] == "SUCCESS" and result_data["parsed_output"]:
                 try:
                     plugin_outputs[plugin] = json.loads(result_data["parsed_output"])
-                except:
+                except Exception:
                     plugin_outputs[plugin] = []
             else:
                 plugin_outputs[plugin] = []
             
-            # Save the result metadata to the DB
+            # Save plugin result in DB
             db_result = PluginResult(
                 id=str(uuid.uuid4()),
                 case_id=case_id,
@@ -92,10 +90,9 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
             if result_data["status"] == "SUCCESS":
                 successful_plugins += 1
                 
-        # Commit all plugin results
         db.commit()
 
-        # 4. Phase 4, 5, 6: Run Detection Engine (Cross-View Analysis & Injection)
+        # 4. Run Heuristic Detection Engine
         findings = detect_hidden_processes(
             pslist_data=plugin_outputs.get("windows.pslist.PsList", []),
             psscan_data=plugin_outputs.get("windows.psscan.PsScan", []),
@@ -110,24 +107,28 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
             ldrmodules_data=plugin_outputs.get("windows.ldrmodules.LdrModules", [])
         ))
         
-        # 5. Phase 7: Network Correlation
+        # 5. Network Correlation
         suspicious_pids = set()
         for finding in findings:
-            data = json.loads(finding["evidence_data"])
-            pid = None
-            if "process_info" in data:
-                pid = data["process_info"].get("PID")
-            elif "module_info" in data:
-                pid = data["module_info"].get("PID")
-            
-            if pid is not None:
-                suspicious_pids.add(pid)
+            try:
+                data = json.loads(finding["evidence_data"])
+                pid = None
+                if "process_info" in data:
+                    pid = data["process_info"].get("PID")
+                elif "module_info" in data:
+                    pid = data["module_info"].get("PID")
+                
+                if pid is not None:
+                    suspicious_pids.add(pid)
+            except Exception:
+                pass
                 
         findings.extend(detect_suspicious_network(
             netscan_data=plugin_outputs.get("windows.netscan.NetScan", []),
             suspicious_pids=suspicious_pids
         ))
         
+        # 6. Save Evidence Metadata & Compute Risk Score
         risk_score = 0.0
         for finding in findings:
             evidence = EvidenceMetadata(
@@ -141,7 +142,6 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
             )
             db.add(evidence)
             
-            # Increment Risk Score based on finding type
             if finding["finding_type"] == "HIDDEN_PROCESS":
                 risk_score += 30.0
             elif finding["finding_type"] == "INJECTED_CODE":
@@ -150,18 +150,6 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
                 risk_score += 20.0
             elif finding["finding_type"] == "SUSPICIOUS_NETWORK":
                 risk_score += 40.0
-
-        # 6. Phase 8: Timeline Generation
-        timeline_events = generate_timeline(plugin_outputs)
-        for event in timeline_events:
-            te = TimelineEvent(
-                id=str(uuid.uuid4()),
-                case_id=case_id,
-                timestamp=event["timestamp"],
-                event_type=event["event_type"],
-                details=event["details"]
-            )
-            db.add(te)
 
         db.commit()
 
@@ -172,21 +160,19 @@ def analyze_memory_dump(self, case_id: str, storage_path: str):
         if case:
             if successful_plugins > 0:
                 case.status = "COMPLETED"
-                # Cap risk score at 100
                 case.risk_score = min(100.0, risk_score)
             else:
                 case.status = "FAILED"
                 
         db.commit()
-        return {"status": "success", "job_id": job_id, "case_id": case_id, "successful_plugins": successful_plugins}
+        logger.info(f"Analysis completed for case {case_id}. Risk score: {case.risk_score if case else 'N/A'}")
         
     except Exception as e:
+        logger.error(f"Error analyzing case {case_id}: {e}", exc_info=True)
         db.rollback()
-        # Mark as failed
         case = db.query(Case).filter(Case.id == case_id).first()
         if case:
             case.status = "FAILED"
             db.commit()
-        raise e
     finally:
         db.close()
