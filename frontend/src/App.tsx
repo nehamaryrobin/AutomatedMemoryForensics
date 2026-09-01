@@ -1,19 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { UploadCloud, File as FileIcon, AlertCircle, CheckCircle } from 'lucide-react';
+import { UploadCloud, File as FileIcon, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+
+interface CaseStatus {
+  id: string;
+  filename: string;
+  file_size: number;
+  sha256: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  risk_score: number;
+}
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [caseId, setCaseId] = useState('');
+  const [caseData, setCaseData] = useState<CaseStatus | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFile(e.target.files[0]);
-      setStatus('idle');
+      setUploadStatus('idle');
       setProgress(0);
+      setCaseId('');
+      setCaseData(null);
     }
   };
 
@@ -23,10 +35,9 @@ export default function App() {
     const formData = new FormData();
     formData.append('file', file);
 
-    setStatus('uploading');
+    setUploadStatus('uploading');
     
     try {
-      // In dev, assuming FastAPI runs on 8000
       const response = await axios.post('http://localhost:8000/api/v1/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -39,15 +50,41 @@ export default function App() {
         }
       });
       
-      setStatus('success');
+      setUploadStatus('success');
       setCaseId(response.data.case_id);
       setMessage(response.data.message);
     } catch (error: any) {
       console.error(error);
-      setStatus('error');
+      setUploadStatus('error');
       setMessage(error?.response?.data?.detail || 'An error occurred during upload.');
     }
   };
+
+  // Poll for Case Status once Case ID is available
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+
+    const pollStatus = async () => {
+      try {
+        const response = await axios.get(`http://localhost:8000/api/v1/cases/${caseId}`);
+        setCaseData(response.data);
+
+        // Stop polling if completed or failed
+        if (response.data.status === 'COMPLETED' || response.data.status === 'FAILED') {
+          clearInterval(interval);
+        }
+      } catch (error) {
+        console.error("Error polling case status:", error);
+      }
+    };
+
+    if (caseId && (!caseData || (caseData.status !== 'COMPLETED' && caseData.status !== 'FAILED'))) {
+      pollStatus(); // Initial fetch
+      interval = setInterval(pollStatus, 3000);
+    }
+
+    return () => clearInterval(interval);
+  }, [caseId, caseData?.status]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10">
@@ -85,7 +122,7 @@ export default function App() {
                   <p className="text-xs text-gray-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
                 </div>
               </div>
-              {status === 'idle' && (
+              {uploadStatus === 'idle' && (
                 <button 
                   onClick={handleUpload}
                   className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 transition"
@@ -95,7 +132,7 @@ export default function App() {
               )}
             </div>
 
-            {status === 'uploading' && (
+            {uploadStatus === 'uploading' && (
               <div className="mt-4">
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
                   <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
@@ -104,23 +141,44 @@ export default function App() {
               </div>
             )}
             
-            {status === 'success' && (
-              <div className="mt-4 flex items-start text-green-700 bg-green-50 p-3 rounded">
-                <CheckCircle className="h-5 w-5 mr-2 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium">Upload Complete!</p>
-                  <p className="text-xs">{message}</p>
-                  <p className="text-xs font-mono mt-1 text-gray-600">Case ID: {caseId}</p>
-                </div>
-              </div>
-            )}
-            
-            {status === 'error' && (
+            {uploadStatus === 'error' && (
               <div className="mt-4 flex items-start text-red-700 bg-red-50 p-3 rounded">
                 <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium">Upload Failed</p>
                   <p className="text-xs">{message}</p>
+                </div>
+              </div>
+            )}
+            
+            {/* Analysis Status Area */}
+            {caseData && (
+              <div className="mt-6 border-t pt-4">
+                <h3 className="text-lg font-semibold mb-3">Analysis Status</h3>
+                
+                <div className="bg-white p-4 rounded border shadow-sm flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Case ID: {caseId}</p>
+                    <p className="text-xs text-gray-500 mb-1">SHA-256: {caseData.sha256}</p>
+                    <div className="flex items-center mt-2">
+                      <span className="text-sm font-medium mr-2">Status:</span>
+                      {caseData.status === 'QUEUED' && <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">QUEUED</span>}
+                      {caseData.status === 'RUNNING' && (
+                        <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full flex items-center">
+                          <Loader2 className="animate-spin h-3 w-3 mr-1" /> RUNNING
+                        </span>
+                      )}
+                      {caseData.status === 'COMPLETED' && <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">COMPLETED</span>}
+                      {caseData.status === 'FAILED' && <span className="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">FAILED</span>}
+                    </div>
+                  </div>
+                  
+                  {caseData.status === 'COMPLETED' && (
+                    <div className="text-center p-3 bg-red-50 border border-red-100 rounded">
+                      <p className="text-xs text-red-800 font-bold uppercase tracking-wider mb-1">Risk Score</p>
+                      <p className="text-3xl font-black text-red-600">{caseData.risk_score}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

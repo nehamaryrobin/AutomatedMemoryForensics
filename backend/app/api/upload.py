@@ -5,6 +5,7 @@ from app.services.storage import LocalObjectStore
 from app.models.case import Case
 from app.schemas.case import UploadResponse
 import uuid
+from worker.tasks import analyze_memory_dump
 
 router = APIRouter()
 storage_service = LocalObjectStore()
@@ -33,7 +34,8 @@ async def upload_memory_dump(
     db.add(new_case)
     await db.commit()
     
-    # TODO: In Phase 2, trigger Celery Task here for analysis
+    # Trigger Celery Task here for analysis
+    analyze_memory_dump.delay(case_id, file_metadata["storage_path"])
     
     return UploadResponse(
         case_id=case_id,
