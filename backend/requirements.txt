@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+asyncpg
+pydantic
+python-multipart
+aiofiles
+celery
+redis
+alembic
