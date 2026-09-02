@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.models.case import Case, EvidenceMetadata, TimelineEvent
 
-DATABASE_URL = "postgresql+asyncpg://sih_user:sih_password@localhost:5432/forensics_db"
+from app.core.config import settings
+
+DATABASE_URL = settings.SQLALCHEMY_DATABASE_URI
 engine = create_async_engine(DATABASE_URL, echo=True)
 async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
